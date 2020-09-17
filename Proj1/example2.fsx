@@ -53,6 +53,17 @@ let processor (mailbox: Actor<_>) =
     }
     loop ()
 
+let perfectSquare n =
+    let h = n &&& 0xF
+    if (h > 9) then false
+    else
+        if ( h <> 2 && h <> 3 && h <> 5 && h <> 6 && h <> 7 && h <> 8 ) then
+            let t = ((n |> double |> sqrt) + 0.5) |> floor|> int
+            t*t = n
+        else false
+let sqrt = perfectSquare 25
+printfn "%A" sqrt
+
 let processorRef = spawn system "processor" processor
 
 processorRef <! ProcessJob(fsi.CommandLineArgs.[1] |> int, fsi.CommandLineArgs.[2] |> int)
