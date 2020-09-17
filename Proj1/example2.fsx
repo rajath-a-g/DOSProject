@@ -25,7 +25,9 @@ let loopIt x y =
     // let work = spawn system  "worker" worker
     // for i in [x .. y] do
     //     work <! i
-    let actorArray = Array.create 100001 (spawn system "myActor" worker)
+    let z = y-x+1
+
+    let actorArray = Array.create z (spawn system "myActor" worker)
     {x..y} |> Seq.iter (fun a ->
         actorArray.[a] <- spawn system (string a) worker
         ()
@@ -34,24 +36,6 @@ let loopIt x y =
         actorArray.[a] <! a
         ()
     ) 
-        
-let processor (mailbox: Actor<_>) = 
-    let mutable sum = 0
-    let mutable i = 100000
-    let rec loop () = actor {
-        let! message = mailbox.Receive ()
-        match message with
-        | ProcessJob(x,y) -> loopIt x y
-                             return! loop ()
-        | Reply(z) -> sum <- sum + z
-                      i <- i - 1
-                      if i = 0 then 
-                        printfn "%i" sum
-                        return ()
-                      else 
-                      return! loop ()
-    }
-    loop ()
 
 let perfectSquare n =
     let h = n &&& 0xF
@@ -61,11 +45,73 @@ let perfectSquare n =
             let t = ((n |> double |> sqrt) + 0.5) |> floor|> int
             t*t = n
         else false
-let sqrt = perfectSquare 25
-printfn "%A" sqrt
+       
+let processor (mailbox: Actor<_>) = 
+    let mutable sum = 0
+    let mutable first = 0
+    let mutable i = 0
+   
+    let rec loop () = actor {
+        let! message = mailbox.Receive ()
+        match message with
+        | ProcessJob(x,y) -> first <- x
+                             i <- y-x+1
+                             loopIt x y
+                             return! loop ()
+        | Reply(z) -> sum <- sum + z
+                      i <- i - 1
+                      if i = 0 then 
+                        printfn "%i" sum
+                        let isPerfect = perfectSquare sum
+                        if isPerfect then 
+                            mailbox.Sender () <! Reply(first)
+                        return ()
+                      else 
+                      return! loop ()
+    }
+    loop ()
+type MasterMessage = 
+                    | GotInput of int * int
+                    | Reply of int
 
-let processorRef = spawn system "processor" processor
+let splitRange n k =
+    let actorArr = Array.create n (spawn system "range" processor)
+    {1..n} |> Seq.iter (fun a ->
+        actorArr.[a] <- spawn system (string a) processor
+        ()
+    )
+    {1..n} |> Seq.iter (fun a ->
+        let ed = a+k-1
+        actorArr.[a] <! ProcessJob(a, ed)
+        ()
+    )
 
-processorRef <! ProcessJob(fsi.CommandLineArgs.[1] |> int, fsi.CommandLineArgs.[2] |> int)
+type Num = int
+let master (mailbox: Actor<_>) =
+    let mutable checkLimit = 0
+    let rec loop () = actor {
+        let mutable low =  Num.MaxValue
+        let! msg = mailbox.Receive ()
+        match msg with
+        | GotInput(N,K) -> checkLimit <- N
+                           splitRange N K
+                           return! loop ()
+        | Reply(first) -> checkLimit <- checkLimit - 1
+                          if first < low then
+                            low <- first
+                          else
+                            return! loop ()
+                          if checkLimit = 0 then
+                            printfn "result: %i" low
+                            return ()
+                          else
+                            return! loop ()
+                                               
+    }
+    loop ()
+
+let masterRef = spawn system "master" master
+
+masterRef <! GotInput(fsi.CommandLineArgs.[1] |> int, fsi.CommandLineArgs.[2] |> int)
 
 System.Console.ReadLine() |> ignore
