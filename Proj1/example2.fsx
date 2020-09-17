@@ -11,9 +11,6 @@ type ProcessorMessage =
                         | ProcessJob of int * int
                         | Reply of int
                         
-
-
-
 let worker (mailbox: Actor<_>) =
     let rec loop () = actor {
         let! message = mailbox.Receive ()
@@ -24,22 +21,35 @@ let worker (mailbox: Actor<_>) =
     }
     loop ()
 
-
 let loopIt x y = 
-    let work = spawn system  "worker" worker
-    for i in [x .. y] do
-        work <! i
+    // let work = spawn system  "worker" worker
+    // for i in [x .. y] do
+    //     work <! i
+    let actorArray = Array.create 100001 (spawn system "myActor" worker)
+    {x..y} |> Seq.iter (fun a ->
+        actorArray.[a] <- spawn system (string a) worker
+        ()
+    )
+    {x..y} |> Seq.iter(fun a ->
+        actorArray.[a] <! a
+        ()
+    ) 
         
-
 let processor (mailbox: Actor<_>) = 
     let mutable sum = 0
+    let mutable i = 100000
     let rec loop () = actor {
         let! message = mailbox.Receive ()
         match message with
         | ProcessJob(x,y) -> loopIt x y
+                             return! loop ()
         | Reply(z) -> sum <- sum + z
-        printfn "%i" sum
-        return! loop ()
+                      i <- i - 1
+                      if i = 0 then 
+                        printfn "%i" sum
+                        return ()
+                      else 
+                      return! loop ()
     }
     loop ()
 
