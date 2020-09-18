@@ -22,18 +22,16 @@ let worker (mailbox: Actor<_>) =
     loop ()
 
 let loopIt x y = 
-    // let work = spawn system  "worker" worker
-    // for i in [x .. y] do
-    //     work <! i
     let z = y-x+1
-
-    let actorArray = Array.create z (spawn system "myActor" worker)
+    let actorArray = Array.create z (spawn system "str" worker)
     {x..y} |> Seq.iter (fun a ->
-        actorArray.[a] <- spawn system (string a) worker
+        let name = x |> string + y |> string + a |> string |> int
+        actorArray.[name] <- spawn system (string name) worker
         ()
     )
     {x..y} |> Seq.iter(fun a ->
-        actorArray.[a] <! a
+        let name = x |> string + y |> string + a |> string |> int
+        actorArray.[name] <! a
         ()
     ) 
 
@@ -75,7 +73,8 @@ type MasterMessage =
                     | Reply of int
 
 let splitRange n k =
-    let actorArr = Array.create n (spawn system "range" processor)
+    let p = n+1
+    let actorArr = Array.create p (spawn system "range" processor)
     {1..n} |> Seq.iter (fun a ->
         actorArr.[a] <- spawn system (string a) processor
         ()
