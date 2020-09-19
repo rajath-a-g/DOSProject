@@ -10,6 +10,9 @@ let system = System.create "system" <| Configuration.load ()
 type ProcessorMessage = 
                         | ProcessJob of int * int
                         | Reply of int
+type MasterMessage = 
+                    | GotInput of int * int
+                    | Ans of int
                         
 let worker (mailbox: Actor<_>) =
     let rec loop () = actor {
@@ -23,19 +26,29 @@ let worker (mailbox: Actor<_>) =
 
 let loopIt x y = 
     let z = y-x+1
-    let actorArray = Array.create z (spawn system "str" worker)
-    {x..y} |> Seq.iter (fun a ->
-        let name = x |> string + y |> string + a |> string |> int
-        actorArray.[name] <- spawn system (string name) worker
+    let ranStr n = 
+        let r = Random()
+        let chars = Array.concat([[|'a' .. 'z'|];[|'A' .. 'Z'|];[|'0' .. '9'|]])
+        let sz = Array.length chars in
+        String(Array.init n (fun _ -> chars.[r.Next sz]))
+    let defa = ranStr z
+    let actorArray = Array.create z (spawn system defa worker)
+    {0..z-1} |> Seq.iter (fun a ->
+        let rand1 = x + y
+        let name = ranStr rand1 + (string x) + (string x) + (string a) 
+        //printfn "%i%i%i%s" x y a name
+        actorArray.[a] <- spawn system name worker
         ()
     )
-    {x..y} |> Seq.iter(fun a ->
-        let name = x |> string + y |> string + a |> string |> int
-        actorArray.[name] <! a
+    {0..z-1} |> Seq.iter(fun a ->
+        //printfn "HERE%i%i%i" x y a
+        let value = a + x
+        actorArray.[a] <! value
         ()
     ) 
 
 let perfectSquare n =
+    //printfn "%i" n
     let h = n &&& 0xF
     if (h > 9) then false
     else
@@ -52,25 +65,23 @@ let processor (mailbox: Actor<_>) =
     let rec loop () = actor {
         let! message = mailbox.Receive ()
         match message with
-        | ProcessJob(x,y) -> first <- x
+        | ProcessJob(x,y) -> //printfn "%i%i" x y
+                             first <- x
                              i <- y-x+1
                              loopIt x y
                              return! loop ()
         | Reply(z) -> sum <- sum + z
                       i <- i - 1
                       if i = 0 then 
-                        printfn "%i" sum
+                        //printfn "%i" sum
                         let isPerfect = perfectSquare sum
                         if isPerfect then 
-                            mailbox.Sender () <! Reply(first)
-                        return ()
-                      else 
+                            select ("akka://system/user/master") mailbox <! Ans(first)
+                            return ()
                       return! loop ()
     }
     loop ()
-type MasterMessage = 
-                    | GotInput of int * int
-                    | Reply of int
+
 
 let splitRange n k =
     let p = n+1
@@ -87,30 +98,19 @@ let splitRange n k =
 
 type Num = int
 let master (mailbox: Actor<_>) =
-    let mutable checkLimit = 0
     let rec loop () = actor {
-        let mutable low =  Num.MaxValue
         let! msg = mailbox.Receive ()
         match msg with
-        | GotInput(N,K) -> checkLimit <- N
-                           splitRange N K
+        | GotInput(N,K) -> splitRange N K
                            return! loop ()
-        | Reply(first) -> checkLimit <- checkLimit - 1
-                          if first < low then
-                            low <- first
-                          else
-                            return! loop ()
-                          if checkLimit = 0 then
-                            printfn "result: %i" low
-                            return ()
-                          else
-                            return! loop ()
-                                               
+        | Ans(first) -> //printfn "In master%i" first
+                        printfn "result: %i" first
+                        return! loop ()                                         
     }
     loop ()
 
 let masterRef = spawn system "master" master
-
+//printfn "%A" masterRef
 masterRef <! GotInput(fsi.CommandLineArgs.[1] |> int, fsi.CommandLineArgs.[2] |> int)
 
 System.Console.ReadLine() |> ignore
