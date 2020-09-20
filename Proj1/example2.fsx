@@ -8,44 +8,12 @@ open System
 let system = System.create "system" <| Configuration.load ()
 
 type ProcessorMessage = 
-                        | ProcessJob of bigint * bigint
-                        | Reply of bigint
+                        | ProcessJob of int * int
 type MasterMessage = 
-                    | GotInput of bigint * int
-                    | Ans of bigint
+                    | GotInput of int * int
+                    | Ans of int
                     | Count
                         
-let worker (mailbox: Actor<_>) =
-    let rec loop () = actor {
-        let! message = mailbox.Receive ()
-        match box message with
-        | :? bigint as msg -> mailbox.Sender () <! Reply(msg * msg)
-        | _ -> ()
-        return! loop ()
-    }
-    loop ()
-
-let loopIt x y =
-    let sub = bigint.Subtract(y, x)
-    let zVal = bigint.Add(sub, 1I)
-    //let z = y-x+1I
-    let h = zVal |> int
-    let name = Guid.NewGuid()
-    let actorArray = Array.create h (spawn system (string name) worker)
-    {0I..zVal-1I} |> Seq.iter (fun n ->
-        //printfn "%i%i%i%s" x y a name
-        let a = n |> int
-        let name1 = Guid.NewGuid()
-        actorArray.[a] <- spawn system (string name1) worker
-        ()
-    )
-    {0I..zVal-1I} |> Seq.iter(fun n ->
-        //printfn "HERE%i%i%i" x y a
-        let a = n |> int
-        let value = n + x
-        actorArray.[a] <! value
-        ()
-    ) 
 
 let perfectSquare n =
     //printfn "%i" n
@@ -56,51 +24,44 @@ let perfectSquare n =
             let t = ((n |> double |> sqrt) + 0.5) |> floor|> bigint
             t*t = n
         else false
-       
+let sumOfSqrs start = bigint.Divide(start * (start + 1I) * (2I * start + 1I), 6I)     
+//  sum = sumOfSquares(first + k - 1) - sumOfSquares(first - 1)
+let sumOfSeq first k = 
+    let one = first + k - 1 |> bigint
+    let two = first - 1 |> bigint
+    let sum1 = sumOfSqrs one
+    let sum2 = sumOfSqrs two
+    bigint.Subtract(sum1, sum2)
+
 let processor (mailbox: Actor<_>) = 
-    let mutable sum = 0I
-    let mutable first = 0I
-    let mutable i = 0I
-   
     let rec loop () = actor {
         let! message = mailbox.Receive ()
         match message with
-        | ProcessJob(x,y) -> //printfn "%i%i" x y
-                             first <- x
-                             i <- y-x+1I
-                             loopIt x y
+        | ProcessJob(x,y) -> let sum = sumOfSeq x y
+                             //printfn "Sum : %i%i%A" x y sum
+                             let isPerfect = perfectSquare sum
+                             select ("akka://system/user/master") mailbox <! Count
+                             if isPerfect then 
+                                select ("akka://system/user/master") mailbox <! Ans(x)
+                                return ()
                              return! loop ()
-        | Reply(z) -> sum <- sum + z
-                      //printfn "%A" sum
-                      i <- i - 1I
-                      if i = 0I then 
-                        //printfn "%A/n" first
-                        select ("akka://system/user/master") mailbox <! Count
-                        let isPerfect = perfectSquare sum
-                        if isPerfect then 
-                            select ("akka://system/user/master") mailbox <! Ans(first)
-                            return ()
-                      return! loop ()
     }
     loop ()
 
 
 let splitRange n k =
-    let p = n+1I
+    let p = n+1
     let convP = p |> int
-    //let convK = k |> bigint
     let actorArr = Array.create convP (spawn system "range" processor)
-    {1I..n} |> Seq.iter (fun n ->
-        let a = n |> int
+    {1..n} |> Seq.iter (fun a ->
         actorArr.[a] <- spawn system (string a) processor
         ()
     )
-    {1I..n} |> Seq.iter (fun n ->
-        let a = n |> int
-        let ed = a+k-1 |> bigint
-        actorArr.[a] <! ProcessJob(n, ed)
+    {1..n} |> Seq.iter (fun a ->
+        actorArr.[a] <! ProcessJob(a, k)
         ()
     )
+
 
 let mutable flag = 0
 type Num = int
@@ -112,12 +73,9 @@ let master (mailbox: Actor<_>) =
         | GotInput(N,K) -> i <- N |> int
                            splitRange N K
                            //printfn "%A" i
-                           let diff = N |> int
-                           let diffe = diff - K
-                           //printfn "%i" diffe
                            return! loop ()
         | Ans(first) -> //printfn "In master%i" first
-                        printfn "result: %i" (int first)
+                        printfn "result: %i" first
                         return! loop () 
         | Count -> i <- i - 1
                    //printfn "%A" i
@@ -133,7 +91,7 @@ let master (mailbox: Actor<_>) =
 let masterRef = spawn system "master" master
 //printfn "%A" masterRef
 
-masterRef <! GotInput(fsi.CommandLineArgs.[1] |> int |> bigint, fsi.CommandLineArgs.[2] |> int)
+masterRef <! GotInput(fsi.CommandLineArgs.[1] |> int , fsi.CommandLineArgs.[2] |> int)
 
 // //Async.RunSynchronously start
 // System.Console.ReadLine()
