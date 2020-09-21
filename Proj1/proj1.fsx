@@ -5,7 +5,7 @@
 open Akka.FSharp
 open System
 // Work Unit - change as required to improve performance
-let numberOfActors = 10
+let numberOfActors = 8
 
 let system = System.create "system" <| Configuration.load ()
 
