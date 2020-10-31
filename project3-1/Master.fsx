@@ -14,15 +14,16 @@ type MasterMessage =
                     | FinishedJoining
                     | Route of string * int * int * int
                     | NotInBoth
-                    | RouteFinish of int
+                    | RouteFinish of int * int * int
                     | RouteNotInBoth
 
 let Master numNodes numRequests system (mailbox:Actor<_>) =
-    let Base = Math.Log((double numNodes))
+    let base1 = (Math.Log((double numNodes)) / Math.Log(4.0)) |> ceil |> int
+    let Base = (float base1)
     let nodeSpace = Math.Pow(4.0, Base) |> int
-    let mutable (randomList : array<int>) = Array.empty
-    let mutable (groupOne : array<int>) = Array.empty   
+    let mutable (randomList : array<int>) = Array.empty   
     let mutable groupOneSize = if numNodes <= 1024 then numNodes else 1024
+    let mutable (groupOne : array<int>) = Array.zeroCreate (groupOneSize+1)
     let mutable numHops = 0
     let mutable numJoined = 0
     let mutable notInBoth = 0
@@ -37,28 +38,34 @@ let Master numNodes numRequests system (mailbox:Actor<_>) =
 
     // shuffle an array (in-place)
     let shuffle a =
-        Array.iteri (fun i _ -> swap a i (rand.Next(i, Array.length a))) a
-        
+        Array.iteri (fun i _ -> swap a i (rand.Next(i, (Array.length a)))) a
+
     {0..nodeSpace} |> Seq.iter (fun i -> 
-        randomList <- Array.append randomList [|i|]
+        randomList <- Array.append [|i|] randomList
     )
     shuffle randomList
+    // printfn "NumNodes %d" numNodes
+    // printfn "Random list : %A" randomList
+    // printfn "%d" groupOne.[2]
 
     {0..groupOneSize} |> Seq.iter (fun i ->
+        //printfn "%d" i
         groupOne.[i] <- randomList.[i]
+        //printfn "%d" i
     )
-
+    printfn "Here?"
     {0..numNodes} |> Seq.iter (fun i -> 
         let base1 = Base |> int
-        spawn system (string 0) <| PastryNode numNodes numRequests 0 base1 |> ignore
+        //printfn "%d" i
+        spawn system (string randomList.[i]) <| PastryNode numNodes numRequests randomList.[i] base1 |> ignore
     )
+    printfn "Here?"
 
     let rec loop () = actor {
         let! message = mailbox.Receive()
         match message with
         | Start -> {0..groupOneSize} |> Seq.iter (fun i ->
-                        let arrayCopy = Array.empty
-                        Array.Copy(groupOne, arrayCopy, groupOne.Length)
+                        let arrayCopy = Array.copy groupOne
                         mailbox.ActorSelection("/user/master/" + (string randomList.[i])) <! InitialJoin(arrayCopy)
                     )
         | FinishedJoining -> numJoined <- numJoined + 1
@@ -77,20 +84,20 @@ let Master numNodes numRequests system (mailbox:Actor<_>) =
         | StartRouting -> printfn "Routing"
                           mailbox.ActorSelection("/user/master/*") <! StartRouting
         | NotInBoth -> notInBoth <- notInBoth + 1
-        | RouteFinish(hops) -> numRouted <- numRouted + 1
-                               numHops <- numHops + hops
-                               {1..10} |> Seq.iter (fun i -> 
-                                    if numRouted = (numNodes * numRequests * (i / 10)) then
-                                        {1..i} |> Seq.iter (fun j ->
-                                            printf "."
-                                        )
-                                        printf "|"  
-                               )
-                               if numRouted >= (numRequests * numNodes) then
-                                    printfn ""
-                                    printfn "Total Routes-> %d Total Hops-> %d" numRouted numHops
-                                    printfn "Average Hops Per Route-> %f" ((double numHops) / (double numRouted))
-                                    mailbox.Context.System.Terminate() |> ignore
+        | RouteFinish(requestTo, requestFrom, hops) -> numRouted <- numRouted + 1
+                                                       numHops <- numHops + hops
+                                                       {1..10} |> Seq.iter (fun i -> 
+                                                            if numRouted = (numNodes * numRequests * (i / 10)) then
+                                                                {1..i} |> Seq.iter (fun j ->
+                                                                    printf "."
+                                                                )
+                                                                printf "|"  
+                                                       )
+                                                       if numRouted >= (numRequests * numNodes) then
+                                                            printfn ""
+                                                            printfn "Total Routes-> %d Total Hops-> %d" numRouted numHops
+                                                            printfn "Average Hops Per Route-> %f" ((double numHops) / (double numRouted))
+                                                            mailbox.Context.System.Terminate() |> ignore
         | RouteNotInBoth -> numRouteNotInBoth <- numRouteNotInBoth + 1
         | _ -> printfn "Wrong message"
         return! loop ()

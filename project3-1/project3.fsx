@@ -22,5 +22,6 @@ if fsi.CommandLineArgs.Length = 3 then
         let master = spawn system "master" <| Master numNodes numRequests system
         master <! Start
     pastryProtocol numNodes numRequests
+    Console.ReadLine () |> ignore
  
 
