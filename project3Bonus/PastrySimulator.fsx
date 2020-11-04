@@ -18,6 +18,8 @@ let system = System.create "FSharp" (config)
 let mutable terminate = true
 let rng = Random()
 
+// Enabler functions used in the algorithm.
+// shuffle all the values in the passed array
 let Shuffle (org:_[]) = 
     let arr = Array.copy org
     let max = (arr.Length - 1)
@@ -30,7 +32,7 @@ let Shuffle (org:_[]) =
    
     [|0..max|] |> Array.fold randomSwap arr
 
-// int -> bigint -> int list
+// Converts the passed integer to a list of integers for the passed base(b)
 let bigintToDigits b source =
     let rec loop (b : int) num digits =
         let (quotient, remainder) = bigint.DivRem(num, bigint b)
@@ -39,16 +41,18 @@ let bigintToDigits b source =
         | _ -> loop b quotient (int remainder :: digits)
     loop b source []
 
+// Converts the passed integer to string
 let digitsToString length source =
     let base4String = source |> List.map (fun (x : int) -> x.ToString("X").ToLowerInvariant()) |> String.concat ""
     let zeroLength = length - base4String.Length
     String.replicate zeroLength "0" + base4String
 
-
+// Converts the passed integer to a string on base 4 scale
 let getBase4String (source:int) (length:int) =
     let bigintToBase4 = bigintToDigits 4
     bigint(source) |> bigintToBase4 |>  digitsToString length
 
+// Returns the maximum prefix match length between the strings
 let getPrefixLen (s1:string) (s2:string) = 
     let mutable j = 0
     while j < s1.Length && s1.[j] = s2.[j] do
@@ -83,6 +87,7 @@ let node numNodes numRequests myID baseVal (childMailbox: Actor<_>) =
     let mutable numOfBack = 0
     let routingTable = Array2D.create baseVal 4 -1
 
+    // Updating the node in either largerLeaf, smallerLeaf or routing table by it's ID value
     let addToNodeState nodeID = 
         if nodeID > myID && not (largerLeafs.Contains nodeID) then
             if largerLeafs.Count < 4 then
@@ -112,14 +117,11 @@ let node numNodes numRequests myID baseVal (childMailbox: Actor<_>) =
             match message with
             | StartRouting -> 
                 for i in 1..numRequests do
-                    // http://api.getakka.net/docs/stable/html/8D5B7D38.htm
                     let message = Route("Route", myID, rng.Next(nodeIDSpace), -1)
                     system.Scheduler.ScheduleTellOnce(TimeSpan.FromMilliseconds(1000 |> float), childMailbox.Self, message)
             | InitialJoin(groupOne) -> 
-                // We have all the random id's or probable id since we got the message 
-                // so delete my id from it and keep all other random id.
-                // Now the make the leafset of node through addbuffer function.
-                // Tell master about joining the network.
+                // All probable ID's are generated randomly considering a range with groupOne
+                // Adding all probable IDs to leafSets and informing master about joining the network.
                 let nodeGroupOne = groupOne |> Array.filter ((<>)myID)
                 addGroupToNodeState nodeGroupOne
                 for i in 0..baseVal-1 do
@@ -127,40 +129,35 @@ let node numNodes numRequests myID baseVal (childMailbox: Actor<_>) =
                 sender <! FinishedJoining
             | Route(msg, source, destination, hops) ->
                 if msg = "Join" then
-                    // If myid and id of helping node has more than one bit in prefix than 
-                    // current then take all the valid entries from its rtable into my routingtable
-                    // Calculate prefix length 
+                    // If a single bit is set as part of prefixLen of destination (nodeID) with respect to myID,
+                    // then add the entries to routingTable upto PrefixLen ,else update by prefixLen index in routingTable
                     let prefixLen = getPrefixLen (getBase4String myID baseVal) (getBase4String destination baseVal)
                     let destinationRef = select ("akka://FSharp/user/master/"+ (destination |> string)) system
                     if hops = -1 && prefixLen > 0 then
                         for i in 0..prefixLen-1 do
                             destinationRef <! AddRow(i, Array.copy routingTable.[i, *])
                     destinationRef <! AddRow(prefixLen, Array.copy routingTable.[prefixLen, *])
-                    // * If id of helping node leafset can be used for next routing or not. 
-                    // * Checking all entries in the smaller leaf table and routing the message to node 
-                    //   with smallest differnce (proximity). 
-                    // * Whether helping node id in range or not
+                   // Checks if the ID of helping node leafset can be used for next routing or not.
+                   // Routing the message to the node with smallest distance irrespective of the range of helping node.
                     if (smallerLeafs.Count > 0 && destination >= smallerLeafs.MinimumElement && destination <= myID)
                         || (largerLeafs.Count > 0 && destination <= largerLeafs.MaximumElement && destination >= myID) then
                         // Search for the nearest node in either smallerLeafs or largerLeafs sets
                         let mutable diff = nodeIDSpace + 10
                         let mutable nearest = -1
                         if destination < myID then
-                            // In smaller leaf set
-                            // Iterate over leaves and reset nearest accordingly
+                            // Updating the nearest in smallerLeaf set
                             for smallerLeaf in smallerLeafs do
                                 if abs (destination - smallerLeaf) < diff then 
                                     nearest <- smallerLeaf
                                     diff <- abs (destination - smallerLeaf)
                         else
-                            // In larger leaf set
-                            // Iterate over leaves and reset nearest accordingly
+                            // Updating the nearest in largerLeaf set
                             for largerLeaf in largerLeafs do
                                 if abs (destination - largerLeaf) < diff then
                                     nearest <- largerLeaf
                                     diff <- abs (destination - largerLeaf)
-                        // In leaf but not near to myID
-                        // That is, nearest as found above is further than diff from myID
+                        // If it is in the leaf but not near to myID, then it is the nearest found,
+                        // Updating it by call to nearestRef
                         if abs (destination - myID) > diff then
                             let nearestRef = select ("akka://FSharp/user/master/"+ (nearest |> string)) system
                             nearestRef <! Route(msg, source, destination, hops+1)
@@ -203,20 +200,10 @@ let node numNodes numRequests myID baseVal (childMailbox: Actor<_>) =
                             else
                                 let nearestref = select ("akka://FSharp/user/master/" + (nearest |> string)) system
                                 nearestref <! Route(msg, source, destination, hops+1)   
-                    // elif destination > myID then
-                    //     let largerLeafsMaxRef = select ("akka://FSharp/user/master/"+ (largerLeafs.MaximumElement |> string)) system
-                    //     largerLeafsMaxRef <! Route(msg, source, destination, hops+1)  
-                    //     // context.parent ! NotInBoth
-                    // elif destination < myID then 
-                    //     let smallerLeafsMinRef = select ("akka://FSharp/user/master/"+ (smallerLeafs.MinimumElement |> string)) system
-                    //     smallerLeafsMinRef <! Route(msg, source, destination, hops+1)
-                    // else 
-                    //     printfn "Not possible"
                 elif msg = "Route" then
-                    // message is route, begin sending message
-                    // Case 1 myID = destination ==> stop routing
-                    // REMOVE: Else: find the nearest node in proximity and check its leafset and routing table till we reach its table
-                    
+                    // From this point on, the algorithm begins sending messages.
+                    // If the ID is equal to destination, we have completed routing, else find the next node
+                    // for routing considering it's leafsets and routing table to acheive minimum number of hops to reach destination.
                     if myID = destination then
                         let parent = select ("akka://FSharp/user/master") system 
                         parent <! RouteFinish(source, destination, hops+1)
@@ -227,21 +214,19 @@ let node numNodes numRequests myID baseVal (childMailbox: Actor<_>) =
                             let mutable diff = nodeIDSpace + 10
                             let mutable nearest = -1
                             if destination < myID then
-                                // In smaller leaf set
-                                // Iterate over leaves and reset nearest accordingly
+                                // Updating the nearest in smallerLeaf set
                                 for smallerLeaf in smallerLeafs do
                                     if abs (destination - smallerLeaf) < diff then 
                                         nearest <- smallerLeaf
                                         diff <- abs (destination - smallerLeaf)
                             else
-                                // In larger leaf set
-                                // Iterate over leaves and reset nearest accordingly
+                                // Updating the nearest in largerLeaf set
                                 for largerLeaf in largerLeafs do
                                     if abs (destination - largerLeaf) < diff then
                                         nearest <- largerLeaf
                                         diff <- abs (destination - largerLeaf)
-                            // In leaf but not near to myID
-                            // That is, nearest as found above is further than diff from myID
+                            // If it is in the leaf but not near to myID, then it is the nearest found,
+                            // Updating it by call to nearestRef
                             if abs (destination - myID) > diff then
                                 let nearestRef = select ("akka://FSharp/user/master/"+ (nearest |> string)) system
                                 nearestRef <! Route(msg, source, destination, hops+1)
@@ -282,19 +267,12 @@ let node numNodes numRequests myID baseVal (childMailbox: Actor<_>) =
                             else
                                 let nearestref = select ("akka://FSharp/user/master/" + (nearest |> string)) system
                                 nearestref <! Route(msg, source, destination, hops+1)
-
-                        // elif destination > myID then
-                        //     let largerLeafsMaxRef = select ("akka://FSharp/user/master/"+ (largerLeafs.MaximumElement |> string)) system
-                        //     largerLeafsMaxRef <! Route(msg, source, destination, hops+1)   
-                        // elif destination < myID then
-                        //     let smallerLeafsMinRef = select ("akka://FSharp/user/master/"+ (smallerLeafs.MinimumElement |> string)) system
-                        //     smallerLeafsMinRef <! Route(msg, source, destination, hops+1) 
-                        // else
-                        //     printfn "Not possible"
+            // Updating the routingTable with the passed row value
             | AddRow(rowNumber, tableRow) -> 
                 for i in 0..tableRow.Length-1 do
                     if routingTable.[rowNumber, i] = -1 then
                         routingTable.[rowNumber, i] <- tableRow.[i]
+            // Updating the leafsets on converging conditions with nearest IDs
             | AddLeaf(leafSet) ->
                 addGroupToNodeState leafSet
                 for smallerLeaf in smallerLeafs do
@@ -307,6 +285,7 @@ let node numNodes numRequests myID baseVal (childMailbox: Actor<_>) =
                     largerLeafRef <! UpdateID(myID)
                 for i in 0..baseVal-1 do
                     routingTable.[i, (getBase4String myID baseVal).[i] |> string |> int] <- myID
+            // Acknowledgement from the node that joined the system with it's information is done through UpdateID and Acknowledgement
             | UpdateID(newNodeID) ->
                 addToNodeState newNodeID
                 sender <! Acknowledgement
@@ -316,8 +295,9 @@ let node numNodes numRequests myID baseVal (childMailbox: Actor<_>) =
                     let parent = select ("akka://FSharp/user/master") system 
                     parent <! FinishedJoining
             | NodeDie -> system.ActorSelection("akka://FSharp/user/master/*") <! RemoveNode(myID)
-                         printfn "Dead : %d" myID
+                         printfn "Failed Node ID : %d" myID
                          system.Stop(childMailbox.Self)
+            // Updating the system of smallerLeaf set, largerLeaf set and routing table by removing the node mentioned for failure simulation.
             | RemoveNode(removeID) ->  if (removeID > myID) && (largerLeafs.Contains removeID) then
                                             largerLeafs <- largerLeafs.Remove removeID
                                             if largerLeafs.Count > 0 then
@@ -365,13 +345,12 @@ let node numNodes numRequests myID baseVal (childMailbox: Actor<_>) =
         }
     childLoop()
 
-let application (numNodes:int) (numRequests:int) (numFailingNodes:int) (mailbox : Actor<_>) = 
-    // Max possible number of digits in the node ID space
-    // each digit is in base 4, ie the digit ranges from 0, 1, 2, 3
+let pastryNode (numNodes:int) (numRequests:int) (numFailingNodes:int) (mailbox : Actor<_>) = 
+    // Maximum number of digits the number of nodes can have considering range from 0-3
     let baseVal = int(ceil (log10(float(numNodes))/log10(float(4))))
-    // The whole possible range of node id space is 4^maxDigits
+    // The nodeIDSpace represents the range of nodeID's that can be present in the system
     let nodeIDSpace = int(float(4) ** float(baseVal))
-    // Random ID list contains random mapping of each index in node ID space to a random value in node ID space
+    // Randomly map the nodeIDSpace to indices amongst the group for assigning nodeID randomly to the nodes
     let randomIdMapping = [|0 .. nodeIDSpace-1|] |> Shuffle
     let groupOneSize = min numNodes 1024
     let groupOne = Array.copy randomIdMapping.[0..groupOneSize-1]
@@ -379,7 +358,6 @@ let application (numNodes:int) (numRequests:int) (numFailingNodes:int) (mailbox 
     let mutable numHops = 0
     let mutable numRouted = 0
     let mutable count = 0
-    printfn "baseVal = %d nodeIDSpace = %d groupOneSize = %d" baseVal nodeIDSpace groupOneSize
 
     // Spawn node actors of the overlay network
     for index in 0..numNodes-1 do
@@ -396,7 +374,7 @@ let application (numNodes:int) (numRequests:int) (numFailingNodes:int) (mailbox 
         | FinishedJoining ->  
             numJoined <- numJoined + 1
             if numJoined = groupOneSize then
-                printfn "Network has been built!!! Waiting for requests...."
+                printfn "Network has been built, Waiting for requests...."
                 if numJoined >= numNodes then 
                     mailbox.Self <! FailNodes
                 else 
@@ -407,7 +385,7 @@ let application (numNodes:int) (numRequests:int) (numFailingNodes:int) (mailbox 
                 else 
                     mailbox.Self <! SecondaryJoin
         | StartRouting -> 
-            printfn "Started the routing now.....We will keep you posted with the progress!"
+            printfn "\nStarted the routing now.....We will keep you posted with the progress!\n"
             system.ActorSelection("akka://FSharp/user/master/*") <! StartRouting
         | SecondaryJoin -> 
             // Select random actor from those already joined
@@ -421,13 +399,16 @@ let application (numNodes:int) (numRequests:int) (numFailingNodes:int) (mailbox 
                 if numRouted = (numNodes - numFailingNodes)*numRequests*i/10 then
                     printfn "We have finished %d0 percent of the routing" i
             if numRouted >= (numNodes - numFailingNodes) * numRequests  && count = 0 then
-                printfn "\nResults are:"
+                printfn "\nResults :"
+                printfn "---------------------------------"
                 printfn "Total Routes = %d Total Hops = %d" numRouted numHops
                 let ratio = float(numHops)/float(numRouted)
                 printfn "Average hops per route = %f" ratio
+                printfn "---------------------------------"
                 count <- count + 1
                 system.Stop(mailbox.Self)
                 terminate <- false
+        // Kill the mentioned number of nodes by randomly selecting the IDs in the system
         | FailNodes -> for i in 0..numFailingNodes-1 do
                             let randomRef = select ("akka://FSharp/user/master/"+ (randomIdMapping.[i] |> string)) system
                             randomRef <! NodeDie
@@ -438,9 +419,9 @@ let application (numNodes:int) (numRequests:int) (numFailingNodes:int) (mailbox 
     loop()
 
 let pastry (numNodes:int) (numRequests:int) (numFailingNodes:int)= 
-    printfn "Starting Pastry protocol for numNodes = %i numRequests = %i" numNodes numRequests
+    printfn "Starting Pastry protocol for numNodes = %i numRequests = %i numFailingNodes = %i" numNodes numRequests numFailingNodes
     let stopWatch = System.Diagnostics.Stopwatch.StartNew()
-    let parentRef = spawn system "master" (application numNodes numRequests numFailingNodes)
+    let parentRef = spawn system "master" (pastryNode numNodes numRequests numFailingNodes)
     parentRef <! Start
     while terminate do
         ignore 0
