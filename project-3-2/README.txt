@@ -2,7 +2,7 @@
 Command Line Arguments
 ----------------------
 
-Example Usage: dotnet fsi project3.fsx --langversion:preview <number of nodes> <number of requests>
+Example Usage: dotnet fsi --langversion:preview project3.fsx <number of nodes> <number of requests>
 
 ----------------------------------------
 1) Team members:
