@@ -307,7 +307,7 @@ let pastryNode (numNodes:int) (numRequests:int) (mailbox : Actor<_>) =
                 else 
                     mailbox.Self <! SecondaryJoin
         | StartRouting -> 
-            printfn "Started the routing now.....We will keep you posted with the progress!"
+            printfn "Started the routing now.....We will keep you posted with the progress!\n"
             system.ActorSelection("akka://FSharp/user/master/*") <! StartRouting
         | SecondaryJoin -> 
             // Select random actor from those already joined
@@ -321,7 +321,7 @@ let pastryNode (numNodes:int) (numRequests:int) (mailbox : Actor<_>) =
                 if numRouted = numNodes*numRequests*i/10 then
                     printfn "We have finished %d0 percent of the routing" i
             if numRouted >= numNodes*numRequests then
-                printfn "\n"
+                printfn "\nResults :"
                 printfn "---------------------------------"
                 printfn "Total Routes = %d Total Hops = %d" numRouted numHops
                 let ratio = float(numHops)/float(numRouted)
